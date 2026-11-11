@@ -1,0 +1,165 @@
+<?xml version="1.0"?>
+<ot-sim>
+  <!-- P-201 sump dewatering / slurry pump station PLC
+     ot-sim device config for the mine OT demo (see README.md).
+     Physics/fault logic runs in the ot-sim logic module; Modbus TCP exposes it.
+     Addresses are raw 0-based Modbus PDU addresses; value = engineering value * 10^scaling.
+     (Comment sits inside <ot-sim>: the C++ DNP3 module rejects anything before the root element.) -->
+  <message-bus>
+    <pull-endpoint>tcp://127.0.0.1:1234</pull-endpoint>
+    <pub-endpoint>tcp://127.0.0.1:5678</pub-endpoint>
+  </message-bus>
+  <cpu>
+    <module name="backplane">ot-sim-message-bus {{config_file}}</module>
+    <module name="logic">ot-sim-logic-module {{config_file}}</module>
+    <module name="modbus">ot-sim-modbus-module {{config_file}}</module>
+  </cpu>
+  <logic name="p201-logic">
+    <period>1s</period>
+    <process-updates>true</process-updates>
+    <program><![CDATA[
+      t = reset > 0.5 ? 0.0 : t + 1
+      auto_mode = reset > 0.5 ? 1.0 : auto_mode
+      auto_faults = reset > 0.5 ? 1.0 : auto_faults
+      pump_cmd = reset > 0.5 ? 0.0 : pump_cmd
+      start_sp = reset > 0.5 ? 60.0 : start_sp
+      stop_sp = reset > 0.5 ? 35.0 : stop_sp
+      cyc = float(int(t) % 180)
+# --- fault: pump motor protection trip. Manual inject = 45 s; auto scenario at 70-125 s of every 180 s ---
+      inj_t = reset > 0.5 ? 0.0 : (trip_cmd > 0.5 ? 45.0 : (inj_t > 0 ? inj_t - 1 : 0.0))
+      trip_cmd = 0.0
+      fault = (auto_faults > 0.5 && cyc >= 70 && cyc < 125) || inj_t > 0
+# trip latches until fault_reset when auto scenarios are off; clears by itself in auto scenario mode
+      pump_trip = fault ? 1.0 : ((fault_reset > 0.5 || reset > 0.5 || auto_faults > 0.5) ? 0.0 : pump_trip)
+      fault_reset = 0.0
+# --- level control (auto: start above start_sp, stop below stop_sp; manual: pump_cmd) ---
+      demand = auto_mode > 0.5 ? (level > start_sp || (pump_run && level > stop_sp)) : pump_cmd > 0.5
+# the pump motor needs the underground feeder CB-2 (read from SS-1 over Modbus)
+      energized = feeder_cb2 > 0.5
+      pump_run = demand && pump_trip < 0.5 && energized
+      inflow = 38 + randFloat() * 8
+      outflow = pump_run ? 62 + randFloat() * 4 : 0.0
+      level = level + (inflow - outflow) * 0.025
+      level = level < 0 ? 0.0 : (level > 100 ? 100.0 : level)
+      high_level = level > 85
+      pressure = pump_run ? 820 + randFloat() * 40 : 15 + randFloat() * 5
+      current = pump_run ? 92 + randFloat() * 6 : 0.0
+      kw = current * 0.69 * 1.732 * 0.85
+      reset = 0.0
+    ]]></program>
+    <variables>
+      <auto_mode tag="p201.auto_mode">1</auto_mode>
+      <pump_cmd tag="p201.pump_cmd">0</pump_cmd>
+      <trip_cmd tag="p201.trip_cmd">0</trip_cmd>
+      <auto_faults tag="p201.auto_faults">1</auto_faults>
+      <fault_reset tag="p201.fault_reset">0</fault_reset>
+      <reset tag="p201.reset">0</reset>
+      <start_sp tag="p201.start_level_sp">60</start_sp>
+      <stop_sp tag="p201.stop_level_sp">35</stop_sp>
+      <level tag="p201.sump_level">50</level>
+      <inflow tag="p201.inflow">0</inflow>
+      <outflow tag="p201.outflow">0</outflow>
+      <pressure tag="p201.discharge_pressure">0</pressure>
+      <current tag="p201.motor_current">0</current>
+      <kw tag="p201.motor_kw">0</kw>
+      <pump_run tag="p201.running">false</pump_run>
+      <pump_trip tag="p201.tripped">0</pump_trip>
+      <high_level tag="p201.high_level">false</high_level>
+      <feeder_cb2 tag="p201.feeder_cb2">1</feeder_cb2>
+      <energized tag="p201.energized">true</energized>
+    </variables>
+  </logic>
+  <modbus name="modbus-server" mode="server">
+    <endpoint>0.0.0.0:502</endpoint>
+    <register type="input" data-type="int16">
+      <address>0</address>
+      <tag>p201.sump_level</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>1</address>
+      <tag>p201.inflow</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>2</address>
+      <tag>p201.outflow</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>3</address>
+      <tag>p201.discharge_pressure</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>4</address>
+      <tag>p201.motor_current</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>5</address>
+      <tag>p201.motor_kw</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="discrete">
+      <address>0</address>
+      <tag>p201.running</tag>
+    </register>
+    <register type="discrete">
+      <address>1</address>
+      <tag>p201.tripped</tag>
+    </register>
+    <register type="discrete">
+      <address>2</address>
+      <tag>p201.high_level</tag>
+    </register>
+    <register type="discrete">
+      <address>3</address>
+      <tag>p201.energized</tag>
+    </register>
+    <register type="coil">
+      <address>0</address>
+      <tag>p201.auto_mode</tag>
+    </register>
+    <register type="coil">
+      <address>1</address>
+      <tag>p201.pump_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>2</address>
+      <tag>p201.trip_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>3</address>
+      <tag>p201.auto_faults</tag>
+    </register>
+    <register type="coil">
+      <address>4</address>
+      <tag>p201.fault_reset</tag>
+    </register>
+    <register type="coil">
+      <address>5</address>
+      <tag>p201.reset</tag>
+    </register>
+    <register type="holding" data-type="int16">
+      <address>0</address>
+      <tag>p201.start_level_sp</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="holding" data-type="int16">
+      <address>1</address>
+      <tag>p201.stop_level_sp</tag>
+      <scaling>0</scaling>
+    </register>
+  </modbus>
+  <!-- ot-sim Modbus CLIENT: read underground feeder CB-2 state from the substation RTU,
+       so a CH4 interlock trip (or an operator opening CB-2) really stops this motor. -->
+  <modbus name="modbus-client-ss1" mode="client">
+    <endpoint>rtu-sub-01:502</endpoint>
+    <period>1s</period>
+    <register type="discrete">
+      <address>1</address>
+      <tag>p201.feeder_cb2</tag>
+    </register>
+  </modbus>
+</ot-sim>

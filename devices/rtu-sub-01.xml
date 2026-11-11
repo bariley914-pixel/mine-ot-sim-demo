@@ -1,0 +1,265 @@
+<?xml version="1.0"?>
+<ot-sim>
+  <!-- SS-1 mine substation RTU - 13.8 kV incomer CB-1 + underground section feeder CB-2
+     ot-sim device config for the mine OT demo (see README.md).
+     Physics/fault logic runs in the ot-sim logic module; Modbus TCP exposes it.
+     Addresses are raw 0-based Modbus PDU addresses; value = engineering value * 10^scaling.
+     (Comment sits inside <ot-sim>: the C++ DNP3 module rejects anything before the root element.) -->
+  <message-bus>
+    <pull-endpoint>tcp://127.0.0.1:1234</pull-endpoint>
+    <pub-endpoint>tcp://127.0.0.1:5678</pub-endpoint>
+  </message-bus>
+  <cpu>
+    <module name="backplane">ot-sim-message-bus {{config_file}}</module>
+    <module name="logic">ot-sim-logic-module {{config_file}}</module>
+    <module name="modbus">ot-sim-modbus-module {{config_file}}</module>
+    <module name="dnp3">ot-sim-dnp3-module {{config_file}}</module>
+  </cpu>
+  <logic name="ss1-logic">
+    <period>1s</period>
+    <process-updates>true</process-updates>
+    <program><![CDATA[
+      t = reset > 0.5 ? 0.0 : t + 1
+      cb1_cmd = reset > 0.5 ? 1.0 : cb1_cmd
+      cb2_cmd = reset > 0.5 ? 1.0 : cb2_cmd
+      auto_faults = reset > 0.5 ? 1.0 : auto_faults
+      cyc = float(int(t) % 240)
+# --- event: utility voltage sag. Manual inject = 12 s; auto at 150-162 s of every 240 s ---
+      inj_t = reset > 0.5 ? 0.0 : (sag_cmd > 0.5 ? 12.0 : (inj_t > 0 ? inj_t - 1 : 0.0))
+      sag_cmd = 0.0
+      sag = (auto_faults > 0.5 && cyc >= 150 && cyc < 162) || inj_t > 0
+      cb1 = cb1_cmd > 0.5
+# methane interlock (30 CFR 75.323 style): CH4 >= 1.5 % de-energizes the underground section feeder
+      cb2 = cb1 && cb2_cmd > 0.5 && gas_interlock < 0.5
+      voltage = cb1 ? (sag ? 11.7 : 13.8) + (randFloat() - 0.5) * 0.08 : 0.0
+      section_kw = cb2 ? 180 + cv_kw + p_kw + randFloat() * 6 : 0.0
+      total_kw = cb1 ? 250 + f_kw + section_kw + randFloat() * 10 : 0.0
+      pf = cb1 ? 0.86 + randFloat() * 0.03 : 0.0
+      current = voltage > 1 ? total_kw / (1.732 * voltage * pf) : 0.0
+      freq = cb1 ? 60 + (randFloat() - 0.5) * 0.04 : 0.0
+      undervolt = cb1 && voltage < 12.4
+      reset = 0.0
+    ]]></program>
+    <variables>
+      <cb1_cmd tag="ss1.cb1_cmd">1</cb1_cmd>
+      <cb2_cmd tag="ss1.cb2_cmd">1</cb2_cmd>
+      <sag_cmd tag="ss1.sag_cmd">0</sag_cmd>
+      <auto_faults tag="ss1.auto_faults">1</auto_faults>
+      <reset tag="ss1.reset">0</reset>
+      <cv_kw tag="ss1.cv101_kw">0</cv_kw>
+      <p_kw tag="ss1.p201_kw">0</p_kw>
+      <f_kw tag="ss1.f301_kw">0</f_kw>
+      <gas_interlock tag="ss1.gas_interlock">0</gas_interlock>
+      <voltage tag="ss1.voltage_kv">13.8</voltage>
+      <current tag="ss1.current_a">0</current>
+      <total_kw tag="ss1.total_kw">0</total_kw>
+      <pf tag="ss1.power_factor">0</pf>
+      <freq tag="ss1.frequency">60</freq>
+      <section_kw tag="ss1.section_kw">0</section_kw>
+      <cb1 tag="ss1.cb1_closed">true</cb1>
+      <cb2 tag="ss1.cb2_closed">true</cb2>
+      <undervolt tag="ss1.undervoltage">false</undervolt>
+    </variables>
+  </logic>
+  <modbus name="modbus-server" mode="server">
+    <endpoint>0.0.0.0:502</endpoint>
+    <register type="input" data-type="int16">
+      <address>0</address>
+      <tag>ss1.voltage_kv</tag>
+      <scaling>2</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>1</address>
+      <tag>ss1.current_a</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>2</address>
+      <tag>ss1.total_kw</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>3</address>
+      <tag>ss1.power_factor</tag>
+      <scaling>3</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>4</address>
+      <tag>ss1.frequency</tag>
+      <scaling>2</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>5</address>
+      <tag>ss1.section_kw</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="discrete">
+      <address>0</address>
+      <tag>ss1.cb1_closed</tag>
+    </register>
+    <register type="discrete">
+      <address>1</address>
+      <tag>ss1.cb2_closed</tag>
+    </register>
+    <register type="discrete">
+      <address>2</address>
+      <tag>ss1.undervoltage</tag>
+    </register>
+    <register type="discrete">
+      <address>3</address>
+      <tag>ss1.gas_interlock</tag>
+    </register>
+    <register type="coil">
+      <address>0</address>
+      <tag>ss1.cb1_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>1</address>
+      <tag>ss1.cb2_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>2</address>
+      <tag>ss1.sag_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>3</address>
+      <tag>ss1.auto_faults</tag>
+    </register>
+    <register type="coil">
+      <address>4</address>
+      <tag>ss1.reset</tag>
+    </register>
+  </modbus>
+  <!-- ot-sim Modbus CLIENTS: the substation RTU reads each feeder load and the gas
+       interlock from the field PLCs, like a real data concentrator. -->
+  <modbus name="mb-client-cv101" mode="client">
+    <endpoint>plc-conveyor-01:502</endpoint>
+    <period>1s</period>
+    <register type="input" data-type="int16">
+      <address>5</address>
+      <tag>ss1.cv101_kw</tag>
+      <scaling>0</scaling>
+    </register>
+  </modbus>
+  <modbus name="mb-client-p201" mode="client">
+    <endpoint>plc-dewater-01:502</endpoint>
+    <period>1s</period>
+    <register type="input" data-type="int16">
+      <address>5</address>
+      <tag>ss1.p201_kw</tag>
+      <scaling>0</scaling>
+    </register>
+  </modbus>
+  <modbus name="mb-client-f301" mode="client">
+    <endpoint>plc-vent-01:502</endpoint>
+    <period>1s</period>
+    <register type="input" data-type="int16">
+      <address>5</address>
+      <tag>ss1.f301_kw</tag>
+      <scaling>0</scaling>
+    </register>
+  </modbus>
+  <modbus name="mb-client-gm401" mode="client">
+    <endpoint>rtu-gas-01:502</endpoint>
+    <period>1s</period>
+    <register type="discrete">
+      <address>1</address>
+      <tag>ss1.gas_interlock</tag>
+    </register>
+  </modbus>
+  <dnp3 name="dnp3-outstation" mode="server">
+    <endpoint>0.0.0.0:20000</endpoint>
+    <cold-restart-delay>15</cold-restart-delay>
+    <outstation name="ss1-outstation">
+      <local-address>1024</local-address>
+      <remote-address>1</remote-address>
+      <warm-restart-delay>5</warm-restart-delay>
+      <input type="binary">
+        <address>0</address>
+        <tag>ss1.cb1_closed</tag>
+        <svar>Group1Var1</svar>
+        <evar>Group2Var1</evar>
+        <class>Class1</class>
+      </input>
+      <input type="binary">
+        <address>1</address>
+        <tag>ss1.cb2_closed</tag>
+        <svar>Group1Var1</svar>
+        <evar>Group2Var1</evar>
+        <class>Class1</class>
+      </input>
+      <input type="binary">
+        <address>2</address>
+        <tag>ss1.undervoltage</tag>
+        <svar>Group1Var1</svar>
+        <evar>Group2Var1</evar>
+        <class>Class1</class>
+      </input>
+      <input type="binary">
+        <address>3</address>
+        <tag>ss1.gas_interlock</tag>
+        <svar>Group1Var1</svar>
+        <evar>Group2Var1</evar>
+        <class>Class1</class>
+      </input>
+      <output type="binary">
+        <address>0</address>
+        <tag>ss1.cb1_cmd</tag>
+        <svar>Group10Var2</svar>
+        <evar>Group11Var2</evar>
+        <class>Class1</class>
+        <sbo>false</sbo>
+      </output>
+      <output type="binary">
+        <address>1</address>
+        <tag>ss1.cb2_cmd</tag>
+        <svar>Group10Var2</svar>
+        <evar>Group11Var2</evar>
+        <class>Class1</class>
+        <sbo>false</sbo>
+      </output>
+      <input type="analog">
+        <address>0</address>
+        <tag>ss1.voltage_kv</tag>
+        <svar>Group30Var6</svar>
+        <evar>Group32Var6</evar>
+        <class>Class1</class>
+      </input>
+      <input type="analog">
+        <address>1</address>
+        <tag>ss1.current_a</tag>
+        <svar>Group30Var6</svar>
+        <evar>Group32Var6</evar>
+        <class>Class1</class>
+      </input>
+      <input type="analog">
+        <address>2</address>
+        <tag>ss1.total_kw</tag>
+        <svar>Group30Var6</svar>
+        <evar>Group32Var6</evar>
+        <class>Class1</class>
+      </input>
+      <input type="analog">
+        <address>3</address>
+        <tag>ss1.power_factor</tag>
+        <svar>Group30Var6</svar>
+        <evar>Group32Var6</evar>
+        <class>Class1</class>
+      </input>
+      <input type="analog">
+        <address>4</address>
+        <tag>ss1.frequency</tag>
+        <svar>Group30Var6</svar>
+        <evar>Group32Var6</evar>
+        <class>Class1</class>
+      </input>
+      <input type="analog">
+        <address>5</address>
+        <tag>ss1.section_kw</tag>
+        <svar>Group30Var6</svar>
+        <evar>Group32Var6</evar>
+        <class>Class1</class>
+      </input>
+    </outstation>
+  </dnp3>
+</ot-sim>

@@ -1,0 +1,198 @@
+# otmon-mine - register map, alarm rules, baseline ranges and HMI controls for the
+# mine OT demo. Must match devices/*.xml (ot-sim configs). Addresses are raw 0-based
+# Modbus PDU addresses; engineering value = raw / 10^scale.
+site_name: Demo Mine 1 (simulated)
+poll_interval_s: 1          # OTMon hard floor is 1 s
+history_s: 900              # trend history kept in memory (15 min)
+write_watch_window_s: 6     # a watched setpoint change with no HMI write in this window -> R-WR-001
+
+devices:
+  - id: plc-conveyor-01
+    name: CV-101 Main Incline Conveyor
+    kind: conveyor
+    role: PLC - VFD conveyor drive
+    area: Underground - main incline
+    host: plc-conveyor-01
+    port: 502
+    unit: 1
+    status: {running: running, tripped: vfd_trip}
+    kpis: [speed_pct, load_tph, motor_current, motor_temp]
+    points:
+      - {id: speed_pct,     type: input,    addr: 0, scale: 1, units: "%",   label: Drive speed, trend: true, max: 110}
+      - {id: belt_speed,    type: input,    addr: 1, scale: 2, units: m/s,   label: Belt speed, trend: true, max: 4}
+      - {id: load_tph,      type: input,    addr: 2, scale: 0, units: t/h,   label: Belt load, trend: true, max: 1600}
+      - {id: motor_current, type: input,    addr: 3, scale: 1, units: A,     label: Motor current, trend: true, max: 650}
+      - {id: motor_temp,    type: input,    addr: 4, scale: 1, units: "°C",  label: Motor winding temp, trend: true, max: 130}
+      - {id: motor_kw,      type: input,    addr: 5, scale: 0, units: kW,    label: Motor power, trend: true, max: 700}
+      - {id: running,       type: discrete, addr: 0, label: Running}
+      - {id: overload,      type: discrete, addr: 1, label: Overcurrent}
+      - {id: vfd_trip,      type: discrete, addr: 2, label: VFD tripped}
+      - {id: jam,           type: discrete, addr: 3, label: Belt jam detected}
+      - {id: energized,     type: discrete, addr: 4, label: Supply energized (CB-2 closed, read from SS-1)}
+      - {id: run_cmd,       type: coil,     addr: 0, label: Run command, watch_writes: true}
+      - {id: jam_cmd,       type: coil,     addr: 1, label: "Fault inject: belt jam (pulse)"}
+      - {id: auto_faults,   type: coil,     addr: 2, label: Auto fault scenarios}
+      - {id: fault_reset,   type: coil,     addr: 3, label: Trip reset (pulse)}
+      - {id: reset,         type: coil,     addr: 4, label: Sim reset (pulse)}
+      - {id: speed_sp,      type: holding,  addr: 0, scale: 0, units: "%",   label: Speed setpoint, baseline: [0, 100], watch_writes: true}
+    alarms:
+      - {point: motor_current, hi: 420, hihi: 500, label: Conveyor motor overcurrent}
+      - {point: motor_temp,    hi: 95,  label: Conveyor motor over-temperature}
+      - {point: vfd_trip,      state: 1, severity: high, label: CV-101 VFD tripped on overload}
+      - {point: jam,           state: 1, severity: medium, label: CV-101 belt jam / overload condition}
+    controls:
+      - {label: Start, point: run_cmd, value: 1, style: go}
+      - {label: Stop,  point: run_cmd, value: 0, style: stop, confirm: "Stop the main incline conveyor?"}
+      - {label: Speed setpoint, point: speed_sp, kind: setpoint, min: 0, max: 100, step: 5}
+      - {label: Reset VFD trip, point: fault_reset, value: 1, style: neutral}
+    faults:
+      - {label: Inject belt jam (30 s), point: jam_cmd, value: 1}
+
+  - id: plc-dewater-01
+    name: P-201 Sump Dewatering Pump
+    kind: pump
+    role: PLC - pump station
+    area: Underground - main sump
+    host: plc-dewater-01
+    port: 502
+    unit: 1
+    status: {running: running, tripped: tripped}
+    kpis: [sump_level, outflow, discharge_pressure, motor_current]
+    points:
+      - {id: sump_level,         type: input, addr: 0, scale: 1, units: "%",   label: Sump level, trend: true, max: 100}
+      - {id: inflow,             type: input, addr: 1, scale: 1, units: L/s,   label: Inflow (est.), trend: true, max: 80}
+      - {id: outflow,            type: input, addr: 2, scale: 1, units: L/s,   label: Pump discharge flow, trend: true, max: 80}
+      - {id: discharge_pressure, type: input, addr: 3, scale: 0, units: kPa,   label: Discharge pressure, trend: true, max: 1000}
+      - {id: motor_current,      type: input, addr: 4, scale: 1, units: A,     label: Motor current, trend: true, max: 150}
+      - {id: motor_kw,           type: input, addr: 5, scale: 0, units: kW,    label: Motor power, trend: true, max: 120}
+      - {id: running,     type: discrete, addr: 0, label: Pump running}
+      - {id: tripped,     type: discrete, addr: 1, label: Pump tripped}
+      - {id: high_level,  type: discrete, addr: 2, label: Sump high-level switch}
+      - {id: energized,   type: discrete, addr: 3, label: Supply energized (CB-2 closed, read from SS-1)}
+      - {id: auto_mode,   type: coil, addr: 0, label: Auto (level control), watch_writes: true}
+      - {id: pump_cmd,    type: coil, addr: 1, label: Manual run command, watch_writes: true}
+      - {id: trip_cmd,    type: coil, addr: 2, label: "Fault inject: motor trip (pulse)"}
+      - {id: auto_faults, type: coil, addr: 3, label: Auto fault scenarios}
+      - {id: fault_reset, type: coil, addr: 4, label: Trip reset (pulse)}
+      - {id: reset,       type: coil, addr: 5, label: Sim reset (pulse)}
+      - {id: start_level_sp, type: holding, addr: 0, scale: 0, units: "%", label: Pump start level, baseline: [40, 80], watch_writes: true}
+      - {id: stop_level_sp,  type: holding, addr: 1, scale: 0, units: "%", label: Pump stop level,  baseline: [15, 50], watch_writes: true}
+    alarms:
+      - {point: sump_level, hi: 80, hihi: 90, label: Sump level high}
+      - {point: tripped,    state: 1, severity: high, label: P-201 dewatering pump tripped}
+      - {point: high_level, state: 1, severity: critical, label: Sump high-level switch - flooding risk}
+    controls:
+      - {label: Auto, point: auto_mode, value: 1, style: go}
+      - {label: Manual, point: auto_mode, value: 0, style: neutral}
+      - {label: Pump ON (manual), point: pump_cmd, value: 1, style: go}
+      - {label: Pump OFF (manual), point: pump_cmd, value: 0, style: stop}
+      - {label: Start level, point: start_level_sp, kind: setpoint, min: 40, max: 80, step: 5}
+      - {label: Stop level,  point: stop_level_sp,  kind: setpoint, min: 15, max: 50, step: 5}
+      - {label: Reset pump trip, point: fault_reset, value: 1, style: neutral}
+    faults:
+      - {label: Inject pump trip (45 s), point: trip_cmd, value: 1}
+
+  - id: plc-vent-01
+    name: F-301 Main Ventilation Fan
+    kind: fan
+    role: PLC - main fan
+    area: Surface - upcast shaft
+    host: plc-vent-01
+    port: 502
+    unit: 1
+    status: {running: running}
+    kpis: [airflow, vibration, bearing_temp, speed_pct]
+    points:
+      - {id: speed_pct,    type: input, addr: 0, scale: 1, units: "%",    label: Fan speed, trend: true, max: 100}
+      - {id: airflow,      type: input, addr: 1, scale: 1, units: "m³/s", label: Airflow, trend: true, max: 280}
+      - {id: fan_dp,       type: input, addr: 2, scale: 0, units: Pa,     label: Fan pressure, trend: true, max: 2000}
+      - {id: vibration,    type: input, addr: 3, scale: 2, units: mm/s,   label: Bearing vibration (RMS), trend: true, max: 14}
+      - {id: bearing_temp, type: input, addr: 4, scale: 1, units: "°C",   label: Bearing temp, trend: true, max: 120}
+      - {id: motor_kw,     type: input, addr: 5, scale: 0, units: kW,     label: Motor power, trend: true, max: 1000}
+      - {id: running,  type: discrete, addr: 0, label: Fan running}
+      - {id: vib_high, type: discrete, addr: 1, label: Vibration trip level}
+      - {id: run_cmd,     type: coil, addr: 0, label: Run command, watch_writes: true}
+      - {id: vib_cmd,     type: coil, addr: 1, label: "Fault inject: bearing wear (pulse)"}
+      - {id: auto_faults, type: coil, addr: 2, label: Auto fault scenarios}
+      - {id: fault_reset, type: coil, addr: 3, label: Fault reset (pulse)}
+      - {id: reset,       type: coil, addr: 4, label: Sim reset (pulse)}
+      - {id: speed_sp,    type: holding, addr: 0, scale: 0, units: "%", label: Fan speed setpoint, baseline: [60, 100], watch_writes: true}
+    alarms:
+      - {point: vibration, hi: 4.5, hihi: 7.1, label: Main fan bearing vibration}
+      - {point: airflow,   lo: 150, lolo: 60, label: Main fan airflow low}
+      - {point: bearing_temp, hi: 70, label: Main fan bearing temperature}
+    controls:
+      - {label: Start fan, point: run_cmd, value: 1, style: go}
+      - {label: Stop fan,  point: run_cmd, value: 0, style: stop, confirm: "Stop the MAIN VENTILATION FAN? Methane will build up underground."}
+      - {label: Fan speed setpoint, point: speed_sp, kind: setpoint, min: 60, max: 100, step: 5}
+    faults:
+      - {label: Inject bearing wear (60 s), point: vib_cmd, value: 1}
+
+  - id: rtu-gas-01
+    name: GM-401 Gas Monitor (Return Airway)
+    kind: gas
+    role: RTU - atmospheric monitoring
+    area: Underground - longwall return
+    host: rtu-gas-01
+    port: 502
+    unit: 1
+    status: {}
+    kpis: [ch4, co, o2, air_velocity]
+    points:
+      - {id: ch4,          type: input, addr: 0, scale: 2, units: "% CH₄", label: Methane, trend: true, max: 3}
+      - {id: co,           type: input, addr: 1, scale: 1, units: ppm,    label: Carbon monoxide, trend: true, max: 50}
+      - {id: o2,           type: input, addr: 2, scale: 1, units: "% O₂", label: Oxygen, trend: true, max: 21}
+      - {id: air_velocity, type: input, addr: 3, scale: 2, units: m/s,    label: Air velocity, trend: true, max: 4}
+      - {id: airflow_seen, type: input, addr: 4, scale: 1, units: "m³/s", label: Fan airflow (read from F-301 by RTU), max: 280}
+      - {id: ch4_alert,    type: discrete, addr: 0, label: "CH₄ ≥ 1.0 % alert"}
+      - {id: ch4_powercut, type: discrete, addr: 1, label: "CH₄ ≥ 1.5 % power-cut interlock"}
+      - {id: gas_cmd,      type: coil, addr: 0, label: "Fault inject: methane inflow (pulse)"}
+      - {id: auto_faults,  type: coil, addr: 1, label: Auto fault scenarios}
+      - {id: reset,        type: coil, addr: 2, label: Sim reset (pulse)}
+    alarms:
+      - {point: ch4, hi: 1.0, hihi: 1.5, label: Methane concentration}
+      - {point: co,  hi: 10, label: Carbon monoxide}
+      - {point: o2,  lo: 19.5, label: Oxygen deficiency}
+      - {point: ch4_powercut, state: 1, severity: critical, label: "CH₄ power-cut interlock - section de-energized"}
+    controls: []
+    faults:
+      - {label: Inject methane inflow (50 s), point: gas_cmd, value: 1}
+
+  - id: rtu-sub-01
+    name: SS-1 Mine Substation 13.8 kV
+    kind: substation
+    role: RTU - Modbus + DNP3 outstation
+    area: Surface - main substation
+    host: rtu-sub-01
+    port: 502
+    unit: 1
+    dnp3: {port: 20000, outstation: 1024}
+    status: {running: cb1_closed}
+    kpis: [voltage_kv, total_kw, current_a, section_kw]
+    points:
+      - {id: voltage_kv,   type: input, addr: 0, scale: 2, units: kV, label: Bus voltage, trend: true, max: 15}
+      - {id: current_a,    type: input, addr: 1, scale: 1, units: A,  label: Incomer current, trend: true, max: 150}
+      - {id: total_kw,     type: input, addr: 2, scale: 0, units: kW, label: Total mine load, trend: true, max: 2500}
+      - {id: power_factor, type: input, addr: 3, scale: 3, units: PF, label: Power factor, trend: true, max: 1}
+      - {id: frequency,    type: input, addr: 4, scale: 2, units: Hz, label: Frequency, trend: true, max: 61}
+      - {id: section_kw,   type: input, addr: 5, scale: 0, units: kW, label: Underground section feeder (CB-2), trend: true, max: 1200}
+      - {id: cb1_closed,    type: discrete, addr: 0, label: CB-1 incomer closed}
+      - {id: cb2_closed,    type: discrete, addr: 1, label: CB-2 underground feeder closed}
+      - {id: undervoltage,  type: discrete, addr: 2, label: Undervoltage (27)}
+      - {id: gas_interlock, type: discrete, addr: 3, label: Gas interlock from GM-401}
+      - {id: cb1_cmd,     type: coil, addr: 0, label: CB-1 close command, watch_writes: true}
+      - {id: cb2_cmd,     type: coil, addr: 1, label: CB-2 close command, watch_writes: true}
+      - {id: sag_cmd,     type: coil, addr: 2, label: "Fault inject: voltage sag (pulse)"}
+      - {id: auto_faults, type: coil, addr: 3, label: Auto fault scenarios}
+      - {id: reset,       type: coil, addr: 4, label: Sim reset (pulse)}
+    alarms:
+      - {point: voltage_kv,   lo: 12.4, lolo: 1.0, label: Substation bus undervoltage}
+      - {point: cb2_closed,   state: 0, severity: high, label: CB-2 underground section feeder OPEN}
+      - {point: cb1_closed,   state: 0, severity: critical, label: CB-1 main incomer OPEN - mine blackout}
+    controls:
+      - {label: Close CB-1, point: cb1_cmd, value: 1, style: go}
+      - {label: Open CB-1,  point: cb1_cmd, value: 0, style: stop, confirm: "Open the MAIN INCOMER? This de-energizes the whole mine."}
+      - {label: Close CB-2, point: cb2_cmd, value: 1, style: go}
+      - {label: Open CB-2,  point: cb2_cmd, value: 0, style: stop, confirm: "Open the underground section feeder?"}
+    faults:
+      - {label: Inject voltage sag (12 s), point: sag_cmd, value: 1}

@@ -1,0 +1,160 @@
+<?xml version="1.0"?>
+<ot-sim>
+  <!-- CV-101 main incline conveyor - VFD drive PLC
+     ot-sim device config for the mine OT demo (see README.md).
+     Physics/fault logic runs in the ot-sim logic module; Modbus TCP exposes it.
+     Addresses are raw 0-based Modbus PDU addresses; value = engineering value * 10^scaling.
+     (Comment sits inside <ot-sim>: the C++ DNP3 module rejects anything before the root element.) -->
+  <message-bus>
+    <pull-endpoint>tcp://127.0.0.1:1234</pull-endpoint>
+    <pub-endpoint>tcp://127.0.0.1:5678</pub-endpoint>
+  </message-bus>
+  <cpu>
+    <module name="backplane">ot-sim-message-bus {{config_file}}</module>
+    <module name="logic">ot-sim-logic-module {{config_file}}</module>
+    <module name="modbus">ot-sim-modbus-module {{config_file}}</module>
+  </cpu>
+  <logic name="cv101-logic">
+    <period>1s</period>
+    <process-updates>true</process-updates>
+    <program><![CDATA[
+# --- reset / scenario clock (t = seconds since start or reset) ---
+      t = reset > 0.5 ? 0.0 : t + 1
+      run_cmd = reset > 0.5 ? 1.0 : run_cmd
+      auto_faults = reset > 0.5 ? 1.0 : auto_faults
+      speed_sp = reset > 0.5 ? 100.0 : (speed_sp < 0 ? 0.0 : (speed_sp > 110 ? 110.0 : speed_sp))
+      cyc = float(int(t) % 150)
+# --- fault: belt jam / overload. Manual inject = 30 s; auto scenario at 40-70 s of every 150 s ---
+      inj_t = reset > 0.5 ? 0.0 : (jam_cmd > 0.5 ? 30.0 : (inj_t > 0 ? inj_t - 1 : 0.0))
+      jam_cmd = 0.0
+      jam = (auto_faults > 0.5 && cyc >= 40 && cyc < 70) || inj_t > 0
+# --- VFD overload trip: 12 s above 420 A trips the drive; reset coil (or auto mode after 30 s) clears it ---
+      ovl_t = overload ? ovl_t + 1 : 0.0
+      vfd_trip = (fault_reset > 0.5 || reset > 0.5) ? 0.0 : ((vfd_trip > 0.5 || ovl_t >= 12) ? 1.0 : 0.0)
+      trip_t = vfd_trip > 0.5 ? trip_t + 1 : 0.0
+      vfd_trip = (auto_faults > 0.5 && trip_t > 30) ? 0.0 : vfd_trip
+      fault_reset = 0.0
+# --- process ---
+# the drive needs the underground feeder CB-2 (read from SS-1 over Modbus) to be closed
+      energized = feeder_cb2 > 0.5
+      target = (run_cmd > 0.5 && vfd_trip < 0.5 && energized) ? speed_sp : 0.0
+      speed = speed + (target - speed) * 0.25
+      running = speed > 1
+      load = running ? (1150 * speed / 100) * (0.9 + 0.2 * randFloat()) : 0.0
+      current = running ? 60 + load * 0.25 + (jam ? 260 : 0) + randFloat() * 8 : 0.0
+      overload = current > 420
+      motor_temp = motor_temp + ((35 + current * 0.12) - motor_temp) * 0.06
+      belt_speed = speed * 0.035
+      kw = current * 0.69 * 1.732 * 0.86
+      reset = 0.0
+    ]]></program>
+    <variables>
+      <run_cmd tag="cv101.run_cmd">1</run_cmd>
+      <speed_sp tag="cv101.speed_sp">100</speed_sp>
+      <jam_cmd tag="cv101.jam_cmd">0</jam_cmd>
+      <auto_faults tag="cv101.auto_faults">1</auto_faults>
+      <fault_reset tag="cv101.fault_reset">0</fault_reset>
+      <reset tag="cv101.reset">0</reset>
+      <speed tag="cv101.speed_pct">100</speed>
+      <belt_speed tag="cv101.belt_speed">0</belt_speed>
+      <load tag="cv101.load_tph">0</load>
+      <current tag="cv101.motor_current">0</current>
+      <motor_temp tag="cv101.motor_temp">35</motor_temp>
+      <kw tag="cv101.motor_kw">0</kw>
+      <running tag="cv101.running">false</running>
+      <overload tag="cv101.overload">false</overload>
+      <vfd_trip tag="cv101.vfd_trip">0</vfd_trip>
+      <jam tag="cv101.jam">false</jam>
+      <feeder_cb2 tag="cv101.feeder_cb2">1</feeder_cb2>
+      <energized tag="cv101.energized">true</energized>
+    </variables>
+  </logic>
+  <modbus name="modbus-server" mode="server">
+    <endpoint>0.0.0.0:502</endpoint>
+    <register type="input" data-type="int16">
+      <address>0</address>
+      <tag>cv101.speed_pct</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>1</address>
+      <tag>cv101.belt_speed</tag>
+      <scaling>2</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>2</address>
+      <tag>cv101.load_tph</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>3</address>
+      <tag>cv101.motor_current</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>4</address>
+      <tag>cv101.motor_temp</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>5</address>
+      <tag>cv101.motor_kw</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="discrete">
+      <address>0</address>
+      <tag>cv101.running</tag>
+    </register>
+    <register type="discrete">
+      <address>1</address>
+      <tag>cv101.overload</tag>
+    </register>
+    <register type="discrete">
+      <address>2</address>
+      <tag>cv101.vfd_trip</tag>
+    </register>
+    <register type="discrete">
+      <address>3</address>
+      <tag>cv101.jam</tag>
+    </register>
+    <register type="discrete">
+      <address>4</address>
+      <tag>cv101.energized</tag>
+    </register>
+    <register type="coil">
+      <address>0</address>
+      <tag>cv101.run_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>1</address>
+      <tag>cv101.jam_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>2</address>
+      <tag>cv101.auto_faults</tag>
+    </register>
+    <register type="coil">
+      <address>3</address>
+      <tag>cv101.fault_reset</tag>
+    </register>
+    <register type="coil">
+      <address>4</address>
+      <tag>cv101.reset</tag>
+    </register>
+    <register type="holding" data-type="int16">
+      <address>0</address>
+      <tag>cv101.speed_sp</tag>
+      <scaling>0</scaling>
+    </register>
+  </modbus>
+  <!-- ot-sim Modbus CLIENT: read underground feeder CB-2 state from the substation RTU,
+       so a CH4 interlock trip (or an operator opening CB-2) really stops this motor. -->
+  <modbus name="modbus-client-ss1" mode="client">
+    <endpoint>rtu-sub-01:502</endpoint>
+    <period>1s</period>
+    <register type="discrete">
+      <address>1</address>
+      <tag>cv101.feeder_cb2</tag>
+    </register>
+  </modbus>
+</ot-sim>

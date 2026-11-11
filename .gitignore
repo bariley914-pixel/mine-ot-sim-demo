@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# runtime state / logs
+*.log
+findings.jsonl
+/state/
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+# local env overrides (may hold host-specific settings)
+.env

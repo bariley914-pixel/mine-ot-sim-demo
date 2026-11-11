@@ -1,0 +1,126 @@
+<?xml version="1.0"?>
+<ot-sim>
+  <!-- F-301 main mine ventilation fan PLC
+     ot-sim device config for the mine OT demo (see README.md).
+     Physics/fault logic runs in the ot-sim logic module; Modbus TCP exposes it.
+     Addresses are raw 0-based Modbus PDU addresses; value = engineering value * 10^scaling.
+     (Comment sits inside <ot-sim>: the C++ DNP3 module rejects anything before the root element.) -->
+  <message-bus>
+    <pull-endpoint>tcp://127.0.0.1:1234</pull-endpoint>
+    <pub-endpoint>tcp://127.0.0.1:5678</pub-endpoint>
+  </message-bus>
+  <cpu>
+    <module name="backplane">ot-sim-message-bus {{config_file}}</module>
+    <module name="logic">ot-sim-logic-module {{config_file}}</module>
+    <module name="modbus">ot-sim-modbus-module {{config_file}}</module>
+  </cpu>
+  <logic name="f301-logic">
+    <period>1s</period>
+    <process-updates>true</process-updates>
+    <program><![CDATA[
+      t = reset > 0.5 ? 0.0 : t + 1
+      fan_run_cmd = reset > 0.5 ? 1.0 : fan_run_cmd
+      auto_faults = reset > 0.5 ? 1.0 : auto_faults
+      speed_sp = reset > 0.5 ? 90.0 : (speed_sp < 0 ? 0.0 : (speed_sp > 100 ? 100.0 : speed_sp))
+      cyc = float(int(t) % 200)
+# --- fault: bearing degradation -> rising vibration. Manual inject = 60 s; auto at 110-170 s of every 200 s ---
+      inj_t = reset > 0.5 ? 0.0 : (vib_cmd > 0.5 ? 60.0 : (inj_t > 0 ? inj_t - 1 : 0.0))
+      vib_cmd = 0.0
+      bearing = (auto_faults > 0.5 && cyc >= 110 && cyc < 170) || inj_t > 0
+      bear_t = bearing ? bear_t + 1 : 0.0
+      target = fan_run_cmd > 0.5 ? speed_sp : 0.0
+      speed = speed + (target - speed) * 0.1
+      running = speed > 5
+      airflow = speed * 2.6 * (0.98 + randFloat() * 0.04)
+      dp = speed * speed * 0.18 * (0.98 + randFloat() * 0.04)
+      vib = running ? (1.6 + randFloat() * 0.5 + bear_t * 0.16) * speed / 100 : 0.05
+      vib_high = vib > 7.1
+      bearing_temp = bearing_temp + ((40 + bear_t * 0.5 + speed * 0.1) - bearing_temp) * 0.05
+      kw = speed * speed * speed / 1000000 * 950
+      fault_reset = 0.0
+      reset = 0.0
+    ]]></program>
+    <variables>
+      <fan_run_cmd tag="f301.run_cmd">1</fan_run_cmd>
+      <speed_sp tag="f301.speed_sp">90</speed_sp>
+      <vib_cmd tag="f301.vib_cmd">0</vib_cmd>
+      <auto_faults tag="f301.auto_faults">1</auto_faults>
+      <fault_reset tag="f301.fault_reset">0</fault_reset>
+      <reset tag="f301.reset">0</reset>
+      <speed tag="f301.speed_pct">90</speed>
+      <airflow tag="f301.airflow">0</airflow>
+      <dp tag="f301.fan_dp">0</dp>
+      <vib tag="f301.vibration">0</vib>
+      <bearing_temp tag="f301.bearing_temp">40</bearing_temp>
+      <kw tag="f301.motor_kw">0</kw>
+      <running tag="f301.running">false</running>
+      <vib_high tag="f301.vib_high">false</vib_high>
+    </variables>
+  </logic>
+  <modbus name="modbus-server" mode="server">
+    <endpoint>0.0.0.0:502</endpoint>
+    <register type="input" data-type="int16">
+      <address>0</address>
+      <tag>f301.speed_pct</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>1</address>
+      <tag>f301.airflow</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>2</address>
+      <tag>f301.fan_dp</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>3</address>
+      <tag>f301.vibration</tag>
+      <scaling>2</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>4</address>
+      <tag>f301.bearing_temp</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>5</address>
+      <tag>f301.motor_kw</tag>
+      <scaling>0</scaling>
+    </register>
+    <register type="discrete">
+      <address>0</address>
+      <tag>f301.running</tag>
+    </register>
+    <register type="discrete">
+      <address>1</address>
+      <tag>f301.vib_high</tag>
+    </register>
+    <register type="coil">
+      <address>0</address>
+      <tag>f301.run_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>1</address>
+      <tag>f301.vib_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>2</address>
+      <tag>f301.auto_faults</tag>
+    </register>
+    <register type="coil">
+      <address>3</address>
+      <tag>f301.fault_reset</tag>
+    </register>
+    <register type="coil">
+      <address>4</address>
+      <tag>f301.reset</tag>
+    </register>
+    <register type="holding" data-type="int16">
+      <address>0</address>
+      <tag>f301.speed_sp</tag>
+      <scaling>0</scaling>
+    </register>
+  </modbus>
+</ot-sim>

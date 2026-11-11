@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>otmon · mine OT monitor</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><img src="/static/favicon.svg" alt="" class="logo"><div><b>otmon</b><span>mine OT monitor + HMI</span></div></div>
+  <div class="site" id="site">connecting…</div>
+  <div class="counters" id="counters"></div>
+  <div class="topright">
+    <span class="pill" id="comms">comms –</span>
+    <span class="pill" id="hmimode">HMI –</span>
+    <button class="btn small" id="ackAll" title="Acknowledge all alarms">Ack all</button>
+    <span class="clock" id="clock"></span>
+  </div>
+</header>
+<div class="banner hidden" id="banner"></div>
+<div class="layout">
+  <nav class="side" id="nav">
+    <a href="#/overview" data-r="overview"><i>▦</i>Overview</a>
+    <a href="#/alarms" data-r="alarms"><i>⚠</i>Alarms <b class="badge" id="navAlarmBadge"></b></a>
+    <a href="#/trends" data-r="trends"><i>📈</i>Trends</a>
+    <div class="navhead">Devices</div>
+    <div id="navDevices"></div>
+    <div class="navhead">Records</div>
+    <a href="#/events" data-r="events"><i>☰</i>Events &amp; audit</a>
+    <a href="#/system" data-r="system"><i>⚙</i>System &amp; comms</a>
+    <div class="navfoot">Simulated plant · ot-sim (GPL-3.0)<br>Not for use on real OT networks</div>
+  </nav>
+  <main id="view"></main>
+</div>
+<div class="modal hidden" id="modal"><div class="modalbox"><h3 id="modalTitle"></h3><p id="modalText"></p>
+  <div class="modalbtns"><button class="btn" id="modalCancel">Cancel</button><button class="btn danger" id="modalOk">Confirm</button></div></div></div>
+<div class="toasts" id="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

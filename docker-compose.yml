@@ -1,0 +1,96 @@
+# Mine OT simulation (ot-sim devices) + otmon-mine monitor/HMI.
+#   docker compose up -d --build     -> open http://localhost:8088
+# Every host port is published on 127.0.0.1 only (nothing is exposed to your LAN).
+name: mine-ot-sim
+
+x-otsim-device: &otsim-device
+  image: mine-ot-sim/otsim:latest
+  pull_policy: never        # built locally by the plc-conveyor-01 service
+  restart: unless-stopped
+  init: true
+  command: ["ot-sim-cpu-module", "/etc/ot-sim/config.xml"]
+  healthcheck:
+    # healthy once something LISTENs on TCP 502 (0x01F6); no extra tools needed in the image
+    test: ["CMD-SHELL", "grep -qiE ':01F6 [0-9A-F]+:0000 0A' /proc/net/tcp /proc/net/tcp6"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+    start_period: 5s
+  logging:                  # ot-sim logs every tag update; keep container logs bounded
+    driver: json-file
+    options: {max-size: "5m", max-file: "2"}
+
+services:
+  plc-conveyor-01:
+    <<: *otsim-device
+    build:
+      context: ./otsim
+      args: {OTSIM_REF: 9dc33047ff9fb474e61c8931c7dac7bf98df38ef}   # pinned upstream ot-sim commit
+    pull_policy: build
+    hostname: plc-conveyor-01
+    volumes: ["./devices/plc-conveyor-01.xml:/etc/ot-sim/config.xml:ro"]
+    networks: {ot-net: {ipv4_address: 10.77.10.21}}
+    ports: ["127.0.0.1:15021:502"]
+
+  plc-dewater-01:
+    <<: *otsim-device
+    hostname: plc-dewater-01
+    depends_on: {plc-conveyor-01: {condition: service_started}}
+    volumes: ["./devices/plc-dewater-01.xml:/etc/ot-sim/config.xml:ro"]
+    networks: {ot-net: {ipv4_address: 10.77.10.22}}
+    ports: ["127.0.0.1:15022:502"]
+
+  plc-vent-01:
+    <<: *otsim-device
+    hostname: plc-vent-01
+    depends_on: {plc-conveyor-01: {condition: service_started}}
+    volumes: ["./devices/plc-vent-01.xml:/etc/ot-sim/config.xml:ro"]
+    networks: {ot-net: {ipv4_address: 10.77.10.23}}
+    ports: ["127.0.0.1:15023:502"]
+
+  rtu-gas-01:
+    <<: *otsim-device
+    hostname: rtu-gas-01
+    depends_on: {plc-vent-01: {condition: service_started}}
+    volumes: ["./devices/rtu-gas-01.xml:/etc/ot-sim/config.xml:ro"]
+    networks: {ot-net: {ipv4_address: 10.77.10.24}}
+    ports: ["127.0.0.1:15024:502"]
+
+  rtu-sub-01:
+    <<: *otsim-device
+    hostname: rtu-sub-01
+    depends_on:
+      plc-conveyor-01: {condition: service_started}
+      plc-dewater-01: {condition: service_started}
+      plc-vent-01: {condition: service_started}
+      rtu-gas-01: {condition: service_started}
+    volumes: ["./devices/rtu-sub-01.xml:/etc/ot-sim/config.xml:ro"]
+    networks: {ot-net: {ipv4_address: 10.77.10.25}}
+    ports: ["127.0.0.1:15025:502", "127.0.0.1:20000:20000"]
+
+  otmon-mine:
+    build: ./monitor
+    image: mine-ot-sim/otmon-mine:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      OTMON_HMI_WRITES: "${OTMON_HMI_WRITES:-1}"          # 0 = pure read-only OTMon monitor
+      OTMON_ALLOWED_HOSTS: "${OTMON_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}"
+    depends_on:
+      plc-conveyor-01: {condition: service_healthy}
+      plc-dewater-01: {condition: service_healthy}
+      plc-vent-01: {condition: service_healthy}
+      rtu-gas-01: {condition: service_healthy}
+      rtu-sub-01: {condition: service_healthy}
+    networks: {ot-net: {ipv4_address: 10.77.10.5}}
+    ports: ["127.0.0.1:${OTMON_HOST_PORT:-8088}:8088"]
+    volumes: ["otmon-state:/var/lib/otmon-mine"]
+
+networks:
+  ot-net:
+    name: mine-ot-net
+    ipam:
+      config: [{subnet: 10.77.10.0/24}]
+
+volumes:
+  otmon-state:

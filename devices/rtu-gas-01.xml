@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<ot-sim>
+  <!-- GM-401 atmospheric monitoring RTU (longwall return airway)
+     ot-sim device config for the mine OT demo (see README.md).
+     Physics/fault logic runs in the ot-sim logic module; Modbus TCP exposes it.
+     Addresses are raw 0-based Modbus PDU addresses; value = engineering value * 10^scaling.
+     (Comment sits inside <ot-sim>: the C++ DNP3 module rejects anything before the root element.) -->
+  <message-bus>
+    <pull-endpoint>tcp://127.0.0.1:1234</pull-endpoint>
+    <pub-endpoint>tcp://127.0.0.1:5678</pub-endpoint>
+  </message-bus>
+  <cpu>
+    <module name="backplane">ot-sim-message-bus {{config_file}}</module>
+    <module name="logic">ot-sim-logic-module {{config_file}}</module>
+    <module name="modbus">ot-sim-modbus-module {{config_file}}</module>
+  </cpu>
+  <logic name="gm401-logic">
+    <period>1s</period>
+    <process-updates>true</process-updates>
+    <program><![CDATA[
+      t = reset > 0.5 ? 0.0 : t + 1
+      auto_faults = reset > 0.5 ? 1.0 : auto_faults
+      cyc = float(int(t) % 240)
+# --- event: methane inflow (gas outburst / feeder). Manual inject = 50 s; auto at 20-70 s of every 240 s ---
+      inj_t = reset > 0.5 ? 0.0 : (gas_cmd > 0.5 ? 50.0 : (inj_t > 0 ? inj_t - 1 : 0.0))
+      gas_cmd = 0.0
+      release = (auto_faults > 0.5 && cyc >= 20 && cyc < 70) || inj_t > 0
+      af = airflow < 10 ? 10.0 : airflow
+      ch4_target = 0.25 * 234 / af + (release ? 1.45 : 0.0) + randFloat() * 0.03
+      ch4_target = ch4_target > 5 ? 5.0 : ch4_target
+      ch4 = reset > 0.5 ? 0.25 : ch4 + (ch4_target - ch4) * 0.08
+      co = 6 + randFloat() * 2 + (release ? 4 : 0)
+      o2 = 20.9 - ch4 * 0.2 - randFloat() * 0.05
+      air_vel = af / 80
+      ch4_alert = ch4 >= 1.0
+      ch4_powercut = ch4 >= 1.5
+      airflow_mirror = airflow
+      reset = 0.0
+    ]]></program>
+    <variables>
+      <gas_cmd tag="gm401.gas_cmd">0</gas_cmd>
+      <auto_faults tag="gm401.auto_faults">1</auto_faults>
+      <reset tag="gm401.reset">0</reset>
+      <airflow tag="gm401.fan_airflow">234</airflow>
+      <ch4 tag="gm401.ch4">0.25</ch4>
+      <co tag="gm401.co">6</co>
+      <o2 tag="gm401.o2">20.9</o2>
+      <air_vel tag="gm401.air_velocity">0</air_vel>
+      <airflow_mirror tag="gm401.airflow_seen">0</airflow_mirror>
+      <ch4_alert tag="gm401.ch4_alert">false</ch4_alert>
+      <ch4_powercut tag="gm401.ch4_powercut">false</ch4_powercut>
+    </variables>
+  </logic>
+  <modbus name="modbus-server" mode="server">
+    <endpoint>0.0.0.0:502</endpoint>
+    <register type="input" data-type="int16">
+      <address>0</address>
+      <tag>gm401.ch4</tag>
+      <scaling>2</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>1</address>
+      <tag>gm401.co</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>2</address>
+      <tag>gm401.o2</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>3</address>
+      <tag>gm401.air_velocity</tag>
+      <scaling>2</scaling>
+    </register>
+    <register type="input" data-type="int16">
+      <address>4</address>
+      <tag>gm401.airflow_seen</tag>
+      <scaling>1</scaling>
+    </register>
+    <register type="discrete">
+      <address>0</address>
+      <tag>gm401.ch4_alert</tag>
+    </register>
+    <register type="discrete">
+      <address>1</address>
+      <tag>gm401.ch4_powercut</tag>
+    </register>
+    <register type="coil">
+      <address>0</address>
+      <tag>gm401.gas_cmd</tag>
+    </register>
+    <register type="coil">
+      <address>1</address>
+      <tag>gm401.auto_faults</tag>
+    </register>
+    <register type="coil">
+      <address>2</address>
+      <tag>gm401.reset</tag>
+    </register>
+  </modbus>
+  <!-- ot-sim Modbus CLIENT: this RTU reads the main fan airflow from F-301 so methane
+       dilution follows real ventilation (stop the fan from the HMI and CH4 climbs). -->
+  <modbus name="modbus-client-f301" mode="client">
+    <endpoint>plc-vent-01:502</endpoint>
+    <period>1s</period>
+    <register type="input" data-type="int16">
+      <address>1</address>
+      <tag>gm401.fan_airflow</tag>
+      <scaling>1</scaling>
+    </register>
+  </modbus>
+</ot-sim>
